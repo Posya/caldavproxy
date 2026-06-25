@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go mod *)",
+      "Bash(go get *)",
+      "Bash(go env *)",
+      "Bash(cd \"$\\(go env GOMODCACHE\\)/github.com/emersion/go-ical@v0.0.0-20250609112844-439c63cef608\")",
+      "Bash(cd \"$\\(go env GOMODCACHE\\)/github.com/emersion/go-webdav@v0.7.0\")",
+      "Bash(go build *)",
+      "Bash(go vet *)",
+      "Bash(go test *)",
+      "Bash(docker build *)",
+      "Bash(docker run *)",
+      "Bash(docker rm *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:18080/test123/calendar.ics)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:18080/)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:18080/wrong/calendar.ics)",
+      "Bash(timeout 30 docker pull tomsquest/docker-radicale:latest)",
+      "Bash(make image *)",
+      "Bash(file dist/*.tar.gz)",
+      "Bash(docker load *)",
+      "Bash(gofmt -w internal/config/config.go main.go)",
+      "Bash(CALDAV_REMOTE_URL=x CALDAV_USERNAME=u CALDAV_PASSWORD=p CALDAV_SECRET_PATH=s LOG_LEVEL=trace ./cdp)",
+      "Bash(CALDAV_REMOTE_URL=http://127.0.0.1:1/dav CALDAV_USERNAME=u CALDAV_PASSWORD=p CALDAV_SECRET_PATH=sekret LOG_LEVEL=debug LISTEN_ADDR=:18098 POLL_INTERVAL=1h timeout 1 /tmp/dbgtest/cdp)",
+      "Bash(CALDAV_REMOTE_URL=http://127.0.0.1:1/dav CALDAV_USERNAME=u CALDAV_PASSWORD=p CALDAV_SECRET_PATH=sekret LISTEN_ADDR=:18097 POLL_INTERVAL=1h timeout 1 /tmp/dbgtest/cdp)",
+      "Bash(gofmt -l .)"
+    ],
+    "additionalDirectories": [
+      "/tmp/dbgtest"
+    ]
+  }
+}

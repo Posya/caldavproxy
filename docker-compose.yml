@@ -1,0 +1,13 @@
+services:
+  caldavproxy:
+    # Build locally, or comment out `build` and rely on a loaded image
+    # (e.g. after `docker load`) by keeping just `image:`.
+    build: .
+    image: caldavproxy:latest
+    container_name: caldavproxy
+    restart: unless-stopped
+    # All configuration comes from the environment; see .env.example.
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
