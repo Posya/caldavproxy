@@ -327,7 +327,9 @@ func Merge(cals []*ical.Calendar) ([]byte, error) {
 	if err := ical.NewEncoder(&buf).Encode(out); err != nil {
 		return nil, fmt.Errorf("encode merged calendar: %w", err)
 	}
-	return buf.Bytes(), nil
+
+	// go-ical does not fold long content lines; normalize to RFC 5545 limits.
+	return foldICS(buf.Bytes()), nil
 }
 
 // logMergedInventory writes per-component details and aggregates that help
