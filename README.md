@@ -1,8 +1,9 @@
 # CalDav
 
-Reads an **authenticated** upstream CalDAV calendar and re-publishes it as a
-plain, **unauthenticated** iCalendar (`.ics`) **agenda** feed at a secret URL
-path — for services that can subscribe to a calendar only by an open link.
+Reads one or more **authenticated** upstream CalDAV calendars (same credentials)
+and re-publishes them as a single plain, **unauthenticated** iCalendar (`.ics`)
+**agenda** feed at a secret URL path — for services that can subscribe to a
+calendar only by an open link.
 
 The feed is a flat list of upcoming events (RRULE series are expanded into
 individual VEVENTs in the configured time window; attendees are stripped).
@@ -13,6 +14,7 @@ re-read from upstream.
 
 ```
 upstream CalDAV (basic auth) ──poll──▶ in-memory .ics ──HTTP (no auth)──▶ /<secret>/calendar.ics
+         (one or more collections, same credentials)
 ```
 
 ## Configuration
@@ -21,16 +23,24 @@ All settings come from environment variables (see [.env.example](.env.example)):
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `CALDAV_REMOTE_URL` | yes | — | Upstream CalDAV endpoint |
-| `CALDAV_USERNAME` | yes | — | Basic-auth user |
+| `CALDAV_REMOTE_URL` | yes | — | Upstream CalDAV base URL (for relative paths) |
+| `CALDAV_USERNAME` | yes | — | Basic-auth user (shared by all sources) |
 | `CALDAV_PASSWORD` | yes | — | Basic-auth password |
 | `CALDAV_SECRET_PATH` | yes | — | Secret path segment that hides the feed |
-| `CALDAV_CALENDAR_PATH` | no | (auto-discover) | Specific calendar collection path |
+| `CALDAV_CALENDAR_URLS` | no | (auto-discover all) | Comma/semicolon/newline list of paths or absolute URLs |
+| `CALDAV_CALENDAR_PATH` | no | — | Legacy alias for a single path or a comma-separated list |
 | `LISTEN_ADDR` | no | `:8080` | Public bind address |
 | `POLL_INTERVAL` | no | `15m` | Upstream refresh interval |
 | `QUERY_WINDOW_PAST` | no | `168h` | How far back to fetch/publish events |
 | `QUERY_WINDOW_FUTURE` | no | `2160h` | How far ahead to fetch/publish events |
 | `LOG_LEVEL` | no | `info` | Log verbosity: `debug` / `info` / `warn` / `error` |
+
+If `CALDAV_CALENDAR_URLS` / `CALDAV_CALENDAR_PATH` are unset, discovery lists
+every calendar in the home set and fetches them all. Explicit lists override
+discovery. Sources are queried one after another with the same credentials and
+merged into one agenda. Partial failures are logged; the feed fails only if
+every source fails. Event UIDs are prefixed per source (`s0|…`, `s1|…`) so
+collisions across calendars do not drop events.
 
 The feed is served at `http://<host>/<CALDAV_SECRET_PATH>/calendar.ics`.
 Generate a secret with e.g. `openssl rand -hex 16`. To "rotate" the URL, change

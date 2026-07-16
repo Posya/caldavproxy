@@ -33,16 +33,17 @@ var emptyCalendar = []byte("BEGIN:VCALENDAR\r\n" +
 	"PRODID:" + prodID + "\r\n" +
 	"END:VCALENDAR\r\n")
 
-// Client fetches and renders the upstream calendar.
+// Client fetches and renders upstream calendar(s).
 type Client struct {
 	cfg        *config.Config
 	dav        *caldav.Client
 	httpClient webdav.HTTPClient
-	calURL     string // resolved calendar collection path
+	// discovered caches auto-discovered calendar paths when no sources are configured.
+	discovered []string
 }
 
 // New constructs a Client with a basic-auth HTTP client targeting the upstream
-// server. The calendar path is resolved lazily on the first Fetch.
+// server. Calendar sources are resolved on Fetch (configured list or discovery).
 func New(cfg *config.Config) (*Client, error) {
 	httpClient := webdav.HTTPClientWithBasicAuth(http.DefaultClient, cfg.Username, cfg.Password)
 	dav, err := caldav.NewClient(httpClient, cfg.RemoteURL)
@@ -53,60 +54,64 @@ func New(cfg *config.Config) (*Client, error) {
 		cfg:        cfg,
 		dav:        dav,
 		httpClient: httpClient,
-		calURL:     cfg.CalendarPath,
 	}, nil
 }
 
-// resolveCalendar determines which calendar collection to query, using the
-// configured path when present and falling back to CalDAV discovery otherwise.
-func (c *Client) resolveCalendar(ctx context.Context) (string, error) {
-	if c.calURL != "" {
-		slog.Debug("using configured calendar path", "path", c.calURL)
-		return c.calURL, nil
+// resolveSources returns the calendar collection paths/URLs to query.
+func (c *Client) resolveSources(ctx context.Context) ([]string, error) {
+	if len(c.cfg.CalendarSources) > 0 {
+		slog.Debug("using configured calendar sources",
+			"count", len(c.cfg.CalendarSources),
+			"sources", c.cfg.CalendarSources)
+		return c.cfg.CalendarSources, nil
+	}
+	if len(c.discovered) > 0 {
+		return c.discovered, nil
 	}
 
 	slog.Debug("discovering calendar via CalDAV")
 
 	principal, err := c.dav.FindCurrentUserPrincipal(ctx)
 	if err != nil {
-		return "", fmt.Errorf("discover principal: %w", err)
+		return nil, fmt.Errorf("discover principal: %w", err)
 	}
 	slog.Debug("discovered current-user-principal", "principal", principal)
 
 	homeSet, err := c.dav.FindCalendarHomeSet(ctx, principal)
 	if err != nil {
-		return "", fmt.Errorf("discover calendar home set: %w", err)
+		return nil, fmt.Errorf("discover calendar home set: %w", err)
 	}
 	slog.Debug("discovered calendar home set", "homeSet", homeSet)
 
 	cals, err := c.dav.FindCalendars(ctx, homeSet)
 	if err != nil {
-		return "", fmt.Errorf("list calendars: %w", err)
+		return nil, fmt.Errorf("list calendars: %w", err)
 	}
 	if len(cals) == 0 {
-		return "", fmt.Errorf("no calendars found at %q", homeSet)
+		return nil, fmt.Errorf("no calendars found at %q", homeSet)
 	}
 
+	paths := make([]string, 0, len(cals))
 	for _, cal := range cals {
 		slog.Debug("found calendar", "name", cal.Name, "path", cal.Path)
+		if cal.Path == "" {
+			continue
+		}
+		paths = append(paths, cal.Path)
+	}
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("no calendar paths found at %q", homeSet)
 	}
 
-	if len(cals) > 1 {
-		slog.Warn("multiple calendars discovered, using the first",
-			"count", len(cals),
-			"chosen", cals[0].Path,
-			"hint", "set CALDAV_CALENDAR_PATH to pick another")
-	}
-
-	c.calURL = cals[0].Path
-	slog.Info("resolved calendar", "path", c.calURL)
-	return c.calURL, nil
+	c.discovered = paths
+	slog.Info("resolved calendars", "count", len(paths), "paths", paths)
+	return c.discovered, nil
 }
 
-// Fetch reads all events within the configured time window and returns the
-// merged calendar encoded as an .ics document.
+// Fetch reads events from every configured (or discovered) calendar within the
+// time window and returns one merged agenda .ics document.
 func (c *Client) Fetch(ctx context.Context) ([]byte, error) {
-	calPath, err := c.resolveCalendar(ctx)
+	sources, err := c.resolveSources(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -115,22 +120,61 @@ func (c *Client) Fetch(ctx context.Context) ([]byte, error) {
 	start := now.Add(-c.cfg.QueryWindowPast)
 	end := now.Add(c.cfg.QueryWindowFuture)
 
-	slog.Debug("querying calendar", "path", calPath, "rangeStart", start, "rangeEnd", end)
+	var (
+		all      []*ical.Calendar
+		failures []string
+		okCount  int
+	)
 
-	// We intentionally do not use c.dav.QueryCalendar here.
-	//
-	// Server returns DAV:getetag values as bare numeric strings like:
-	//   <D:getetag>1782304664085</D:getetag>
-	//
-	// The upstream go-webdav CalDAV query path expects a quoted HTTP ETag and
-	// fails while unquoting it. Discovery works fine, so we keep discovery from
-	// the library and perform the REPORT request ourselves.
-	cals, err := c.queryCalendarRaw(ctx, calPath, start, end)
-	if err != nil {
-		return nil, fmt.Errorf("query calendar %q: %w", calPath, err)
+	for i, src := range sources {
+		slog.Debug("querying calendar", "source", src, "index", i, "rangeStart", start, "rangeEnd", end)
+
+		cals, err := c.queryCalendarRaw(ctx, src, start, end)
+		if err != nil {
+			slog.Error("query calendar failed", "source", src, "error", err)
+			failures = append(failures, fmt.Sprintf("%s: %v", src, err))
+			continue
+		}
+
+		prefixUIDs(cals, fmt.Sprintf("s%d", i))
+		all = append(all, cals...)
+		okCount++
+		slog.Debug("calendar source ok", "source", src, "objects", len(cals))
 	}
 
-	return Merge(cals, start, end)
+	if okCount == 0 {
+		if len(failures) == 0 {
+			return nil, fmt.Errorf("no calendar sources configured")
+		}
+		return nil, fmt.Errorf("all calendar sources failed (%d): %s", len(failures), strings.Join(failures, "; "))
+	}
+	if len(failures) > 0 {
+		slog.Warn("some calendar sources failed; continuing with partial feed",
+			"ok", okCount, "failed", len(failures), "errors", failures)
+	}
+
+	slog.Debug("fetch complete", "sourcesOK", okCount, "sourcesFailed", len(failures), "objects", len(all))
+	return Merge(all, start, end)
+}
+
+// prefixUIDs namespaces event UIDs with a per-source prefix so identical UIDs
+// from different calendars do not collide in the flattened agenda.
+func prefixUIDs(cals []*ical.Calendar, prefix string) {
+	for _, cal := range cals {
+		if cal == nil {
+			continue
+		}
+		for _, child := range cal.Children {
+			if child.Name != ical.CompEvent && child.Name != ical.CompToDo {
+				continue
+			}
+			uid := propValue(child.Props.Get(ical.PropUID))
+			if uid == "" || strings.HasPrefix(uid, prefix+"|") {
+				continue
+			}
+			child.Props.SetText(ical.PropUID, prefix+"|"+uid)
+		}
+	}
 }
 
 // queryCalendarRaw performs a CalDAV calendar-query REPORT manually via
@@ -138,17 +182,13 @@ func (c *Client) Fetch(ctx context.Context) ([]byte, error) {
 //
 // This avoids the strict ETag parsing in the high-level library while keeping
 // the rest of the client logic unchanged.
-func (c *Client) queryCalendarRaw(ctx context.Context, calPath string, start, end time.Time) ([]*ical.Calendar, error) {
-	baseURL, err := url.Parse(c.cfg.RemoteURL)
+//
+// pathOrURL may be an absolute http(s) URL or a path relative to RemoteURL.
+func (c *Client) queryCalendarRaw(ctx context.Context, pathOrURL string, start, end time.Time) ([]*ical.Calendar, error) {
+	reqURL, err := resolveCalendarURL(c.cfg.RemoteURL, pathOrURL)
 	if err != nil {
-		return nil, fmt.Errorf("parse remote URL %q: %w", c.cfg.RemoteURL, err)
+		return nil, err
 	}
-
-	rel, err := url.Parse(calPath)
-	if err != nil {
-		return nil, fmt.Errorf("parse calendar path %q: %w", calPath, err)
-	}
-	reqURL := baseURL.ResolveReference(rel)
 
 	reportBody := buildCalendarQueryBody(start, end)
 
@@ -216,8 +256,35 @@ func (c *Client) queryCalendarRaw(ctx context.Context, calPath string, start, en
 		cals = append(cals, cal)
 	}
 
-	slog.Debug("query returned objects", "count", len(cals))
+	slog.Debug("query returned objects", "count", len(cals), "url", reqURL.String())
 	return cals, nil
+}
+
+// resolveCalendarURL joins RemoteURL with a relative path, or returns an
+// absolute http(s) calendar URL as-is.
+func resolveCalendarURL(remoteURL, pathOrURL string) (*url.URL, error) {
+	pathOrURL = strings.TrimSpace(pathOrURL)
+	if pathOrURL == "" {
+		return nil, fmt.Errorf("empty calendar path/URL")
+	}
+
+	if strings.HasPrefix(pathOrURL, "http://") || strings.HasPrefix(pathOrURL, "https://") {
+		u, err := url.Parse(pathOrURL)
+		if err != nil {
+			return nil, fmt.Errorf("parse calendar URL %q: %w", pathOrURL, err)
+		}
+		return u, nil
+	}
+
+	baseURL, err := url.Parse(remoteURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse remote URL %q: %w", remoteURL, err)
+	}
+	rel, err := url.Parse(pathOrURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse calendar path %q: %w", pathOrURL, err)
+	}
+	return baseURL.ResolveReference(rel), nil
 }
 
 // buildCalendarQueryBody returns a REPORT body requesting ETag and iCalendar

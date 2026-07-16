@@ -1,5 +1,3 @@
-// Package config loads and validates the application configuration from the
-// environment.
 package config
 
 import (
@@ -14,13 +12,14 @@ import (
 // variables so the app stays 12-factor friendly.
 type Config struct {
 	// RemoteURL is the base endpoint of the upstream (authenticated) CalDAV server.
+	// Relative calendar paths are resolved against this URL.
 	RemoteURL string
-	// Username and Password are the basic-auth credentials for the upstream server.
+	// Username and Password are the basic-auth credentials for all upstream sources.
 	Username string
 	Password string
-	// CalendarPath, if set, points directly at a calendar collection and skips
-	// discovery. When empty, the client discovers the calendar automatically.
-	CalendarPath string
+	// CalendarSources lists calendar collection paths or absolute URLs to query.
+	// When empty, the client discovers all calendars under the home set.
+	CalendarSources []string
 
 	// SecretPath is the opaque path segment that hides the public feed,
 	// e.g. "7f3a9c". The feed is served at /<SecretPath>/calendar.ics.
@@ -48,13 +47,18 @@ func Load() (*Config, error) {
 		RemoteURL:         strings.TrimSpace(os.Getenv("CALDAV_REMOTE_URL")),
 		Username:          os.Getenv("CALDAV_USERNAME"),
 		Password:          os.Getenv("CALDAV_PASSWORD"),
-		CalendarPath:      strings.TrimSpace(os.Getenv("CALDAV_CALENDAR_PATH")),
 		SecretPath:        strings.Trim(strings.TrimSpace(os.Getenv("CALDAV_SECRET_PATH")), "/"),
 		ListenAddr:        envOr("LISTEN_ADDR", ":8080"),
 		PollInterval:      15 * time.Minute,
 		QueryWindowPast:   168 * time.Hour,  // ~7 days (near-term feed)
 		QueryWindowFuture: 2160 * time.Hour, // ~90 days (few weeks–months ahead)
 		LogLevel:          slog.LevelInfo,
+	}
+
+	cfg.CalendarSources = parseSourceList(os.Getenv("CALDAV_CALENDAR_URLS"))
+	if len(cfg.CalendarSources) == 0 {
+		// Backward compatible: single path, or comma-separated paths.
+		cfg.CalendarSources = parseSourceList(os.Getenv("CALDAV_CALENDAR_PATH"))
 	}
 
 	var problems []string
@@ -116,6 +120,25 @@ func Load() (*Config, error) {
 // FeedPath returns the public path the calendar feed is served at.
 func (c *Config) FeedPath() string {
 	return "/" + c.SecretPath + "/calendar.ics"
+}
+
+// parseSourceList splits a comma / semicolon / newline separated list of
+// calendar paths or absolute URLs and trims empty entries.
+func parseSourceList(v string) []string {
+	fields := strings.FieldsFunc(v, func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n' || r == '\r'
+	})
+	out := make([]string, 0, len(fields))
+	seen := make(map[string]bool, len(fields))
+	for _, f := range fields {
+		f = strings.TrimSpace(f)
+		if f == "" || seen[f] {
+			continue
+		}
+		seen[f] = true
+		out = append(out, f)
+	}
+	return out
 }
 
 // parseLevel maps a human-readable level name to a slog.Level.

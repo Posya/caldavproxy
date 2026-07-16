@@ -41,7 +41,7 @@ func main() {
 	slog.Debug("effective configuration",
 		"remoteURL", cfg.RemoteURL,
 		"username", cfg.Username,
-		"calendarPath", orAuto(cfg.CalendarPath),
+		"calendarSources", orSources(cfg.CalendarSources),
 		"queryWindowPast", cfg.QueryWindowPast,
 		"queryWindowFuture", cfg.QueryWindowFuture,
 	)
@@ -90,11 +90,11 @@ func newLogger(level slog.Level) *slog.Logger {
 	}))
 }
 
-func orAuto(s string) string {
-	if s == "" {
+func orSources(sources []string) any {
+	if len(sources) == 0 {
 		return "(auto-discover)"
 	}
-	return s
+	return sources
 }
 
 // poll refreshes the store immediately and then on every tick until ctx is done.

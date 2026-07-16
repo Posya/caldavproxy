@@ -164,7 +164,7 @@ func TestIntegrationFetchAndServe(t *testing.T) {
 		RemoteURL:         baseURL,
 		Username:          radicaleUser,
 		Password:          radicalePass,
-		CalendarPath:      calendarPath,
+		CalendarSources:   []string{calendarPath},
 		SecretPath:        "sekret",
 		QueryWindowPast:   720 * time.Hour,
 		QueryWindowFuture: 8760 * time.Hour,
