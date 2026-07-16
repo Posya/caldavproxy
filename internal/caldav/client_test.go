@@ -79,6 +79,25 @@ func TestMergeCombinesEventsAndDedupesTimezones(t *testing.T) {
 	}
 }
 
+func TestEventDay(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"20260716T100000Z", "2026-07-16"},
+		{"20260716", "2026-07-16"},
+		{"20260716T090000", "2026-07-16"},
+		{"", ""},
+		{"tomorrow", ""},
+		{"2026-07-16", ""},
+	}
+	for _, tt := range tests {
+		if got := eventDay(tt.in); got != tt.want {
+			t.Errorf("eventDay(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
 func TestMergeEmptyReturnsValidEmptyCalendar(t *testing.T) {
 	out, err := Merge(nil)
 	if err != nil {

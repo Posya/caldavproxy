@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -295,7 +296,6 @@ func Merge(cals []*ical.Calendar) ([]byte, error) {
 				tzid := propValue(child.Props.Get(ical.PropTimezoneID))
 				if tzid != "" && seenTZ[tzid] {
 					dupTZ++
-					slog.Debug("skipping duplicate timezone", "tzid", tzid)
 					continue
 				}
 				if tzid != "" {
@@ -321,11 +321,124 @@ func Merge(cals []*ical.Calendar) ([]byte, error) {
 		return emptyCalendar, nil
 	}
 
+	logMergedInventory(out)
+
 	var buf bytes.Buffer
 	if err := ical.NewEncoder(&buf).Encode(out); err != nil {
 		return nil, fmt.Errorf("encode merged calendar: %w", err)
 	}
 	return buf.Bytes(), nil
+}
+
+// logMergedInventory writes per-component details and aggregates that help
+// investigate missing events (titles, dates, UID collisions, per-day counts).
+// Individual components are logged at debug; colliding UIDs are warned about.
+func logMergedInventory(cal *ical.Calendar) {
+	type uidStat struct {
+		total   int
+		masters int // components without RECURRENCE-ID
+	}
+
+	byUID := make(map[string]*uidStat)
+	byDay := make(map[string]int)
+
+	for _, child := range cal.Children {
+		if child.Name != ical.CompEvent && child.Name != ical.CompToDo {
+			continue
+		}
+
+		uid := propValue(child.Props.Get(ical.PropUID))
+		summary := propValue(child.Props.Get(ical.PropSummary))
+		dtstart := propValue(child.Props.Get(ical.PropDateTimeStart))
+		recID := propValue(child.Props.Get(ical.PropRecurrenceID))
+		rrule := propValue(child.Props.Get(ical.PropRecurrenceRule))
+
+		slog.Debug("merged component",
+			"kind", child.Name,
+			"uid", uid,
+			"summary", summary,
+			"dtstart", dtstart,
+			"recurrenceId", recID,
+			"rrule", rrule)
+
+		if uid != "" {
+			st := byUID[uid]
+			if st == nil {
+				st = &uidStat{}
+				byUID[uid] = st
+			}
+
+			st.total++
+			if recID == "" {
+				st.masters++
+			}
+		}
+
+		if day := eventDay(dtstart); day != "" {
+			byDay[day]++
+		}
+	}
+
+	if len(byDay) > 0 {
+		days := make([]string, 0, len(byDay))
+		for day := range byDay {
+			days = append(days, day)
+		}
+
+		slices.Sort(days)
+
+		parts := make([]string, 0, len(days))
+		for _, day := range days {
+			parts = append(parts, fmt.Sprintf("%s=%d", day, byDay[day]))
+		}
+
+		slog.Debug("events by day", "counts", strings.Join(parts, ","))
+	}
+
+	uids := make([]string, 0, len(byUID))
+	for uid := range byUID {
+		uids = append(uids, uid)
+	}
+
+	slices.Sort(uids)
+
+	for _, uid := range uids {
+		st := byUID[uid]
+		if st.total <= 1 {
+			continue
+		}
+
+		slog.Debug("UID used by multiple components",
+			"uid", uid,
+			"count", st.total,
+			"masters", st.masters)
+
+		// Several independent events sharing one UID (no RECURRENCE-ID) is
+		// invalid iCalendar; many subscribers keep only one of them.
+		if st.masters > 1 {
+			slog.Warn("duplicate UID without RECURRENCE-ID",
+				"uid", uid,
+				"count", st.total,
+				"masters", st.masters,
+				"hint", "subscribers may keep only one event per UID")
+		}
+	}
+}
+
+// eventDay extracts YYYY-MM-DD from a DTSTART value (DATE or DATE-TIME).
+func eventDay(dtstart string) string {
+	if len(dtstart) < 8 {
+		return ""
+	}
+
+	raw := dtstart[:8]
+	for _, c := range raw {
+		if c < '0' || c > '9' {
+			return ""
+		}
+	}
+
+	return raw[:4] + "-" + raw[4:6] + "-" + raw[6:8]
 }
 
 // propValue safely returns a property's value, or "" if the property is absent.
