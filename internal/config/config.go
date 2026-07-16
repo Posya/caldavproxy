@@ -31,8 +31,8 @@ type Config struct {
 	// PollInterval is how often the upstream calendar is re-read into memory.
 	PollInterval time.Duration
 
-	// QueryWindowPast / QueryWindowFuture bound the time range of the CalDAV
-	// query (many servers reject open-ended queries).
+	// QueryWindowPast / QueryWindowFuture bound the CalDAV query and the
+	// published feed. Recurrence exceptions outside the window are dropped.
 	QueryWindowPast   time.Duration
 	QueryWindowFuture time.Duration
 
@@ -52,8 +52,8 @@ func Load() (*Config, error) {
 		SecretPath:        strings.Trim(strings.TrimSpace(os.Getenv("CALDAV_SECRET_PATH")), "/"),
 		ListenAddr:        envOr("LISTEN_ADDR", ":8080"),
 		PollInterval:      15 * time.Minute,
-		QueryWindowPast:   720 * time.Hour,  // ~30 days
-		QueryWindowFuture: 8760 * time.Hour, // ~365 days
+		QueryWindowPast:   168 * time.Hour,  // ~7 days (near-term feed)
+		QueryWindowFuture: 2160 * time.Hour, // ~90 days (few weeks–months ahead)
 		LogLevel:          slog.LevelInfo,
 	}
 

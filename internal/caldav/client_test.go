@@ -9,6 +9,12 @@ import (
 	"github.com/emersion/go-ical"
 )
 
+func mergeWindow() (time.Time, time.Time) {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+	return start, end
+}
+
 // makeCalendar builds a VCALENDAR containing one VEVENT (with the given UID)
 // and, optionally, a VTIMEZONE with the given TZID.
 func makeCalendar(uid, tzid string) *ical.Calendar {
@@ -46,7 +52,8 @@ func TestMergeCombinesEventsAndDedupesTimezones(t *testing.T) {
 		makeCalendar("c@example.com", "America/New_York"),
 	}
 
-	out, err := Merge(cals)
+	start, end := mergeWindow()
+	out, err := Merge(cals, start, end)
 	if err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
@@ -99,7 +106,8 @@ func TestEventDay(t *testing.T) {
 }
 
 func TestMergeEmptyReturnsValidEmptyCalendar(t *testing.T) {
-	out, err := Merge(nil)
+	start, end := mergeWindow()
+	out, err := Merge(nil, start, end)
 	if err != nil {
 		t.Fatalf("Merge(nil): %v", err)
 	}

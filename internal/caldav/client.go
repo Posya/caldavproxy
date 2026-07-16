@@ -130,7 +130,7 @@ func (c *Client) Fetch(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("query calendar %q: %w", calPath, err)
 	}
 
-	return Merge(cals)
+	return Merge(cals, start, end)
 }
 
 // queryCalendarRaw performs a CalDAV calendar-query REPORT manually via
@@ -275,10 +275,11 @@ type prop struct {
 }
 
 // Merge combines the components of several calendars into one .ics document.
-// VEVENT and VTODO components are copied verbatim; VTIMEZONE components are
-// deduplicated by their TZID so shared timezones appear only once. The result
-// is a valid standalone iCalendar with our own PRODID/VERSION.
-func Merge(cals []*ical.Calendar) ([]byte, error) {
+// VEVENT and VTODO components are copied, then pruned to [start, end): recurring
+// series keep the RRULE master plus in-window RECURRENCE-ID overrides only.
+// VTIMEZONE components are deduplicated by TZID. The result is a standalone
+// iCalendar with our own PRODID/VERSION and RFC 5545 line folding.
+func Merge(cals []*ical.Calendar, start, end time.Time) ([]byte, error) {
 	out := ical.NewCalendar()
 	out.Props.SetText(ical.PropVersion, "2.0")
 	out.Props.SetText(ical.PropProductID, prodID)
@@ -310,7 +311,7 @@ func Merge(cals []*ical.Calendar) ([]byte, error) {
 		}
 	}
 
-	slog.Debug("merged calendar",
+	slog.Debug("merged calendar before prune",
 		"sourceCalendars", len(cals),
 		"components", components,
 		"timezones", timezones,
@@ -318,6 +319,13 @@ func Merge(cals []*ical.Calendar) ([]byte, error) {
 
 	if components == 0 {
 		slog.Debug("no events after merge, returning empty calendar")
+		return emptyCalendar, nil
+	}
+
+	kept, dropped := pruneCalendar(out, start, end)
+	if kept == 0 {
+		slog.Debug("no events in feed window after prune, returning empty calendar",
+			"dropped", dropped)
 		return emptyCalendar, nil
 	}
 

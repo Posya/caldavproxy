@@ -26,8 +26,8 @@ All settings come from environment variables (see [.env.example](.env.example)):
 | `CALDAV_CALENDAR_PATH` | no | (auto-discover) | Specific calendar collection path |
 | `LISTEN_ADDR` | no | `:8080` | Public bind address |
 | `POLL_INTERVAL` | no | `15m` | Upstream refresh interval |
-| `QUERY_WINDOW_PAST` | no | `720h` | How far back to fetch events |
-| `QUERY_WINDOW_FUTURE` | no | `8760h` | How far ahead to fetch events |
+| `QUERY_WINDOW_PAST` | no | `168h` | How far back to fetch/publish events |
+| `QUERY_WINDOW_FUTURE` | no | `2160h` | How far ahead to fetch/publish events |
 | `LOG_LEVEL` | no | `info` | Log verbosity: `debug` / `info` / `warn` / `error` |
 
 The feed is served at `http://<host>/<CALDAV_SECRET_PATH>/calendar.ics`.

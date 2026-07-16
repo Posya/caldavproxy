@@ -84,7 +84,8 @@ func TestMergeFoldsLongLines(t *testing.T) {
 	}
 	cal.Children[0].Props.Add(&att)
 
-	out, err := Merge([]*ical.Calendar{cal})
+	start, end := mergeWindow()
+	out, err := Merge([]*ical.Calendar{cal}, start, end)
 	if err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
