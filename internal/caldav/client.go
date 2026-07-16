@@ -274,18 +274,16 @@ type prop struct {
 	CalendarData string `xml:"calendar-data"`
 }
 
-// Merge combines the components of several calendars into one .ics document.
-// VEVENT and VTODO components are copied, then pruned to [start, end): recurring
-// series keep the RRULE master plus in-window RECURRENCE-ID overrides only.
-// VTIMEZONE components are deduplicated by TZID. The result is a standalone
-// iCalendar with our own PRODID/VERSION and RFC 5545 line folding.
+// Merge combines the components of several calendars into one .ics document,
+// then flattens them into an agenda feed: one VEVENT per occurrence in
+// [start, end), without RRULE/RECURRENCE-ID, with UTC timestamps. The result
+// is a standalone iCalendar with our own PRODID/VERSION and RFC 5545 folding.
 func Merge(cals []*ical.Calendar, start, end time.Time) ([]byte, error) {
 	out := ical.NewCalendar()
 	out.Props.SetText(ical.PropVersion, "2.0")
 	out.Props.SetText(ical.PropProductID, prodID)
 
-	seenTZ := make(map[string]bool)
-	var components, timezones, dupTZ int
+	var components int
 
 	for _, cal := range cals {
 		if cal == nil {
@@ -293,17 +291,6 @@ func Merge(cals []*ical.Calendar, start, end time.Time) ([]byte, error) {
 		}
 		for _, child := range cal.Children {
 			switch child.Name {
-			case ical.CompTimezone:
-				tzid := propValue(child.Props.Get(ical.PropTimezoneID))
-				if tzid != "" && seenTZ[tzid] {
-					dupTZ++
-					continue
-				}
-				if tzid != "" {
-					seenTZ[tzid] = true
-				}
-				out.Children = append(out.Children, child)
-				timezones++
 			case ical.CompEvent, ical.CompToDo:
 				out.Children = append(out.Children, child)
 				components++
@@ -311,21 +298,19 @@ func Merge(cals []*ical.Calendar, start, end time.Time) ([]byte, error) {
 		}
 	}
 
-	slog.Debug("merged calendar before prune",
+	slog.Debug("merged calendar before flatten",
 		"sourceCalendars", len(cals),
-		"components", components,
-		"timezones", timezones,
-		"duplicateTimezonesDropped", dupTZ)
+		"components", components)
 
 	if components == 0 {
 		slog.Debug("no events after merge, returning empty calendar")
 		return emptyCalendar, nil
 	}
 
-	kept, dropped := pruneCalendar(out, start, end)
+	kept, source := flattenCalendar(out, start, end)
 	if kept == 0 {
-		slog.Debug("no events in feed window after prune, returning empty calendar",
-			"dropped", dropped)
+		slog.Debug("no events in feed window after flatten, returning empty calendar",
+			"sourceComponents", source)
 		return emptyCalendar, nil
 	}
 

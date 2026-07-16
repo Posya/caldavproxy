@@ -48,7 +48,7 @@ func makeCalendar(uid, tzid string) *ical.Calendar {
 func TestMergeCombinesEventsAndDedupesTimezones(t *testing.T) {
 	cals := []*ical.Calendar{
 		makeCalendar("a@example.com", "Europe/Moscow"),
-		makeCalendar("b@example.com", "Europe/Moscow"), // same TZID -> dedup
+		makeCalendar("b@example.com", "Europe/Moscow"),
 		makeCalendar("c@example.com", "America/New_York"),
 	}
 
@@ -77,8 +77,11 @@ func TestMergeCombinesEventsAndDedupesTimezones(t *testing.T) {
 	if events != 3 {
 		t.Errorf("events = %d, want 3", events)
 	}
-	if timezones != 2 {
-		t.Errorf("timezones = %d, want 2 (deduped)", timezones)
+	if timezones != 0 {
+		t.Errorf("timezones = %d, want 0 (agenda feed uses UTC)", timezones)
+	}
+	if bytes.Contains(out, []byte("RRULE")) {
+		t.Errorf("agenda feed must not contain RRULE")
 	}
 
 	if got := merged.Props.Get(ical.PropProductID); got == nil || got.Value != prodID {

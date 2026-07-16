@@ -1,10 +1,12 @@
 # CalDav
 
 Reads an **authenticated** upstream CalDAV calendar and re-publishes it as a
-plain, **unauthenticated** iCalendar (`.ics`) feed at a secret URL path — for
-services that can subscribe to a calendar only by an open link.
+plain, **unauthenticated** iCalendar (`.ics`) **agenda** feed at a secret URL
+path — for services that can subscribe to a calendar only by an open link.
 
-The feed is held in memory and refreshed periodically; on restart it is simply
+The feed is a flat list of upcoming events (RRULE series are expanded into
+individual VEVENTs in the configured time window; attendees are stripped).
+It is held in memory and refreshed periodically; on restart it is simply
 re-read from upstream.
 
 ## How it works
